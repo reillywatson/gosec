@@ -125,19 +125,17 @@ func (gosec *Analyzer) LoadRules(ruleDefinitions map[string]RuleBuilder) {
 // Process kicks off the analysis process for a given package
 func (gosec *Analyzer) Process(buildTags []string, packagePaths ...string) error {
 	config := gosec.pkgConfig(buildTags)
-	for _, pkgPath := range packagePaths {
-		pkgs, err := gosec.load(pkgPath, config)
-		if err != nil {
-			gosec.AppendError(pkgPath, err)
-		}
-		for _, pkg := range pkgs {
-			if pkg.Name != "" {
-				err := gosec.ParseErrors(pkg)
-				if err != nil {
-					return fmt.Errorf("parsing errors in pkg %q: %v", pkg.Name, err)
-				}
-				gosec.Check(pkg)
+	pkgs, err := gosec.load(packagePaths, config)
+	if err != nil {
+		return fmt.Errorf("loading packages: %v", err)
+	}
+	for _, pkg := range pkgs {
+		if pkg.Name != "" {
+			err := gosec.ParseErrors(pkg)
+			if err != nil {
+				return fmt.Errorf("parsing errors in pkg %q: %v", pkg.Name, err)
 			}
+			gosec.Check(pkg)
 		}
 	}
 	sortErrors(gosec.errors)
@@ -157,36 +155,26 @@ func (gosec *Analyzer) pkgConfig(buildTags []string) *packages.Config {
 	}
 }
 
-func (gosec *Analyzer) load(pkgPath string, conf *packages.Config) ([]*packages.Package, error) {
-	abspath, err := GetPkgAbsPath(pkgPath)
-	if err != nil {
-		gosec.logger.Printf("Skipping: %s. Path doesn't exist.", abspath)
-		return []*packages.Package{}, nil
-	}
-
-	gosec.logger.Println("Import directory:", abspath)
-	basePackage, err := build.Default.ImportDir(pkgPath, build.ImportComment)
-	if err != nil {
-		return []*packages.Package{}, fmt.Errorf("importing dir %q: %v", pkgPath, err)
-	}
-
-	var packageFiles []string
-	for _, filename := range basePackage.GoFiles {
-		packageFiles = append(packageFiles, path.Join(pkgPath, filename))
-	}
-
-	if gosec.tests {
-		testsFiles := []string{}
-		testsFiles = append(testsFiles, basePackage.TestGoFiles...)
-		testsFiles = append(testsFiles, basePackage.XTestGoFiles...)
-		for _, filename := range testsFiles {
-			packageFiles = append(packageFiles, path.Join(pkgPath, filename))
+func (gosec *Analyzer) load(pkgPaths []string, conf *packages.Config) ([]*packages.Package, error) {
+	var importPaths []string
+	for _, pkgPath := range pkgPaths {
+		abspath, err := GetPkgAbsPath(pkgPath)
+		if err != nil {
+			gosec.logger.Printf("Skipping: %s. Path doesn't exist.", abspath)
+			return []*packages.Package{}, nil
 		}
+
+		gosec.logger.Println("Import directory:", abspath)
+		basePackage, err := build.Default.ImportDir(pkgPath, build.ImportComment)
+		if err != nil {
+			return []*packages.Package{}, fmt.Errorf("importing dir %q: %v", pkgPath, err)
+		}
+		importPaths = append(importPaths, basePackage.ImportPath+"/"+basePackage.Dir)
 	}
 
-	pkgs, err := packages.Load(conf, packageFiles...)
+	pkgs, err := packages.Load(conf, importPaths...)
 	if err != nil {
-		return []*packages.Package{}, fmt.Errorf("loading files from package %q: %v", pkgPath, err)
+		return []*packages.Package{}, fmt.Errorf("loading files from package %q: %v", "", err)
 	}
 	return pkgs, nil
 }
